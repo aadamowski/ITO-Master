@@ -200,6 +200,18 @@ class TCNModel(pl.LightningModule):
         self.output = torch.nn.Conv1d(out_ch, noutputs, kernel_size=1)
 
     def forward(self, x, cond):
+        # Long sequences: cuDNN's conv1d kernel requires 32-bit index math on its
+        # conv tensors (numel < 2^31), which full-length audio can exceed once the
+        # first block expands to channel_width channels. This can result in
+        # `RuntimeError: Expected canUse32BitIndexMath() to be true`.
+        #
+        # Process in overlapping windows (context = receptive field) whose
+        # concatenation is identical to the full-length forward.
+        if x.dim() == 3 and x.shape[-1] > self._max_chunk_samples(x):
+            return self._forward_chunked(x, cond)
+        return self._forward_full(x, cond)
+
+    def _forward_full(self, x, cond):
         # iterate over blocks passing conditioning
         for idx, block in enumerate(self.blocks):
             # for SeFa
@@ -213,6 +225,42 @@ class TCNModel(pl.LightningModule):
         out = torch.clamp(self.output(x + skips), min=-1, max=1)
 
         return out
+
+    def _max_chunk_samples(self, x):
+        # Largest window length such that the widest conv tensor
+        # (batch x channel_width x length) stays below 2^31 elements.
+        width = max(self.hparams.channel_width, self.hparams.ninputs, self.hparams.noutputs)
+        batch = max(int(x.shape[0]), 1)
+        return (2**31 - 1) // batch // width
+
+    def _forward_chunked(self, x, cond):
+        proc_len = self._max_chunk_samples(x)
+        ctx = self.compute_receptive_field()
+        if proc_len <= 2 * ctx:
+            # Window too small to carry the context; fall back to the full pass
+            # (only reachable for degenerate configurations).
+            return self._forward_full(x, cond)
+
+        n = x.shape[-1]
+        step = proc_len - 2 * ctx
+        out_parts = []
+        start = 0
+        while start < n:
+            chunk = x[:, :, start:start + proc_len]
+            if chunk.shape[-1] < proc_len:
+                # zero pad the tail: matches the implicit zero padding the
+                # full-length conv1d applies at the true tensor boundary
+                chunk = F.pad(chunk, (0, proc_len - chunk.shape[-1]))
+            y = self._forward_full(chunk, cond)
+            # Interior window edges overlap by ctx samples (the receptive
+            # field); the first/last window edges are the true tensor
+            # boundaries, so keep all the way to the edge there.
+            keep_start = 0 if start == 0 else ctx
+            keep_end = min(n - start, proc_len - ctx)
+            out_parts.append(y[:, :, keep_start:keep_end])
+            start += step
+
+        return torch.cat(out_parts, dim=-1)
 
     def compute_receptive_field(self):
         """ Compute the receptive field in samples."""
