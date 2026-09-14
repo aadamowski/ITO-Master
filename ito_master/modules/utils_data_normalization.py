@@ -97,7 +97,7 @@ def get_eq_matching(audio_t, ref_spec, sr=44100, n_fft=65536, hop_length=16384,
                                            frq/np.max(frq),
                                            diff_eq,
                                            nfreqs=None, window='hamming',
-                                           nyq=None, antisymmetric=False)
+                                           antisymmetric=False)
 
         output = scipy.signal.filtfilt(diff_filter, 1, audio_t,
                                        axis=-1, padtype='odd', padlen=None,
@@ -151,12 +151,12 @@ def get_eq_matching_gpu(audio_t, ref_spec, sr=44100, n_fft=65536, hop_length=163
                                         frq/np.max(frq),
                                         diff_eq_l,
                                         nfreqs=None, window='hamming',
-                                        nyq=None, antisymmetric=False)
+                                        antisymmetric=False)
         diff_filter_r = scipy.signal.firwin2(ntaps,
                                         frq/np.max(frq),
                                         diff_eq_r,
                                         nfreqs=None, window='hamming',
-                                        nyq=None, antisymmetric=False)
+                                        antisymmetric=False)
         diff_filter = np.stack((diff_filter_l, diff_filter_r), axis=0)
 
         # output = scipy.signal.filtfilt(diff_filter, 1, audio_t,
