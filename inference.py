@@ -200,7 +200,7 @@ class MasteringStyleTransfer:
         # Perform style transfer
         with torch.no_grad():
             output_audio, predicted_params = self.mastering_style_transfer(input_tensor, reference_feature)
-        output_audio = output_audio[0].T.detach().cpu().numpy()
+        output_audio = output_audio[0].T.detach().cpu().float().numpy()
         if self.args.loudness_norm_output:
             output_audio = lufs_normalize(output_audio, self.args.sample_rate, lufs=-14.0)
 
@@ -386,9 +386,10 @@ if __name__ == "__main__":
     mastering_style_transfer = MasteringStyleTransfer(args)
     ''' Style Transfer '''
     print("Starting Style Transfer...")
-    output_audio, predicted_params, sample_rate, input_tensor, initial_reference_feature = mastering_style_transfer.process_audio(
-        args.input_path, args.reference_path
-    )
+    with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
+        output_audio, predicted_params, sample_rate, input_tensor, initial_reference_feature = mastering_style_transfer.process_audio(
+            args.input_path, args.reference_path
+        )
     # Save results
     os.makedirs(args.output_dir_path, exist_ok=True)
     # Save the output audio
